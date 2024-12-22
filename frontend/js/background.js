@@ -1,93 +1,114 @@
-// background.js for SPARTA Detection
+let results = {};
+let legitimatePercents = {};
+let isPhish = {};
+let metrics = {};
 
-// Variables to store classification results
-var results = {};
-var legitimatePercents = {};
-var isPhish = {};
-
-// Function to fetch live classifier data
-function fetchLive(callback) {
-  fetch('https://raw.githubusercontent.com/picopalette/phishing-detection-plugin/master/static/classifier.json', { 
-    method: 'GET'
-  })
-  .then(function(response) { 
-    if (!response.ok) { throw response; }
-    return response.json(); 
-  })
-  .then(function(data) {
-    chrome.storage.local.set({ cache: data, cacheTime: Date.now() }, function() {
-      callback(data);
-    });
-  });
-}
-
-// Function to retrieve the classifier from local storage or fetch live
-function fetchCLF(callback) {
-  chrome.storage.local.get(['cache', 'cacheTime'], function(items) {
-    if (items.cache && items.cacheTime) {
-      return callback(items.cache);
-    }
-    fetchLive(callback);
-  });
-}
-
-// Function to classify tab data
-function classify(tabId, result) {
-  var legitimateCount = 0;
-  var suspiciousCount = 0;
-  var phishingCount = 0;
-
-  // Analyze the results
-  for (var key in result) {
-    if (result[key] == "1") phishingCount++;
-    else if (result[key] == "0") suspiciousCount++;
-    else legitimateCount++;
-  }
-  
-  legitimatePercents[tabId] = (legitimateCount / (phishingCount + suspiciousCount + legitimateCount)) * 100;
-
-  if (result.length != 0) {
-    var X = [];
-    X[0] = [];
-    for (var key in result) {
-      X[0].push(parseInt(result[key]));
-    }
-
-    console.log(result);
-    console.log(X);
-
-    fetchCLF(function(clf) {
-      var rf = random_forest(clf);
-      y = rf.predict(X);
-      console.log(y[0]);
-
-      if (y[0][0]) {
-        isPhish[tabId] = true;
-      } else {
-        isPhish[tabId] = false;
-      }
-
-      chrome.storage.local.set({
-        'results': results, 
-        'legitimatePercents': legitimatePercents, 
-        'isPhish': isPhish
-      });
-
-      // Alert the user if the tab is classified as phishing
-      if (isPhish[tabId]) {
-        chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
-          chrome.tabs.sendMessage(tabs[0].id, { action: "alert_user" }, function(response) {
-            // Callback to handle responses
-          });
+async function callBackendAPI(features, url) {
+    try {
+        console.log("Sending request to backend:", { features, url });
+        const response = await fetch('http://localhost:5000/predict', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                features,
+                url 
+            })
         });
-      }
-    });
-  }
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        console.log("Backend API response:", data);
+        return data;
+    } catch (error) {
+        console.error("Error in API call:", error);
+        return null;
+    }
 }
 
-// Listener for incoming messages
-chrome.runtime.onMessage.addListener(function(request, sender, sendResponse) {
-  results[sender.tab.id] = request;
-  classify(sender.tab.id, request);
-  sendResponse({ received: "result" });
+async function classify(tabId, result) {
+    try {
+        // Get the current tab's URL
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        const url = tabs[0]?.url || '';
+
+        const features = {
+            'URLSimilarityIndex': Math.min(Math.max(parseFloat(result['URLSimilarityIndex'] || 0.5), 0), 1),
+            'NoOfOtherSpecialCharsInURL': parseInt(result['NoOfOtherSpecialCharsInURL'] || 0),
+            'SpacialCharRatioInURL': Math.min(Math.max(parseFloat(result['SpacialCharRatioInURL'] || 0.3), 0), 1),
+            'IsHTTPS': result['IsHTTPS'] ? 1 : 0,
+            'DomainTitleMatchScore': Math.min(Math.max(parseFloat(result['DomainTitleMatchScore'] || 0.5), 0), 1),
+            'URLTitleMatchScore': Math.min(Math.max(parseFloat(result['URLTitleMatchScore'] || 0.5), 0), 1),
+            'IsResponsive': result['IsResponsive'] ? 1 : 0,
+            'HasDescription': result['HasDescription'] ? 1 : 0,
+            'HasSocialNet': result['HasSocialNet'] ? 1 : 0,
+            'HasSubmitButton': result['HasSubmitButton'] ? 1 : 0,
+            'HasCopyrightInfo': result['HasCopyrightInfo'] ? 1 : 0,
+            'NoOfImage': parseInt(result['NoOfImage'] || 0),
+            'NoOfJS': parseInt(result['NoOfJS'] || 0),
+            'NoOfSelfRef': parseInt(result['NoOfSelfRef'] || 0)
+        };
+
+        console.log("Extracted features:", features);
+        const prediction = await callBackendAPI(features, url);
+
+        if (prediction) {
+            isPhish[tabId] = prediction.is_phishing;
+            legitimatePercents[tabId] = prediction.legitimate_probability * 100;
+            metrics = prediction.metrics || {};
+
+            await chrome.storage.local.set({
+                results,
+                legitimatePercents,
+                isPhish,
+                metrics
+            });
+
+            console.log("Updated storage with new prediction:", {
+                isPhish: isPhish[tabId],
+                legitimatePercent: legitimatePercents[tabId],
+                metrics
+            });
+
+            if (isPhish[tabId]) {
+                chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+                    if (tabs[0]) {
+                        chrome.tabs.sendMessage(tabs[0].id, { action: "alert_user" });
+                    }
+                });
+            }
+        }
+    } catch (error) {
+        console.error("Classification error:", error);
+    }
+}
+
+// Listen for tab updates
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+    if (changeInfo.status === 'complete' && tab.url) {
+        console.log("Tab updated:", tab.url);
+        // Trigger classification for the new URL
+        classify(tabId, {});
+    }
+});
+
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (!sender.tab?.id) {
+        console.error("Invalid sender tab:", sender);
+        sendResponse({ error: "invalid_tab" });
+        return false;
+    }
+
+    console.log("Received request:", request);
+    results[sender.tab.id] = request;
+
+    classify(sender.tab.id, request)
+        .then(() => sendResponse({ status: "success" }))
+        .catch(error => {
+            console.error("Classification error:", error);
+            sendResponse({ status: "error", message: error.toString() });
+        });
+
+    return true;
 });

@@ -2,29 +2,41 @@
     "name": "SPARTA Detection",
     "version": "1.0.0",
     "description": "An advanced phishing detection plugin",
-    "permissions": ["activeTab", "declarativeContent", "storage", "webNavigation"],
+    "permissions": [
+        "activeTab",
+        "storage",
+        "webNavigation",
+        "scripting",
+        "tabs"
+    ],
+    "host_permissions": [
+        "*://*/*"
+    ],
     "background": {
-      "service_worker": "js/bg-loader.js"
+        "service_worker": "js/background.js",
+        "type": "module"
     },
     "action": {
-      "default_popup": "plugin_ui.html",
-      "default_icon": {
+        "default_popup": "plugin_ui.html",
+        "default_icon": {
+            "16": "icons/icon16.png",
+            "48": "icons/icon48.png",
+            "128": "icons/icon128.png"
+        }
+    },
+    "content_scripts": [
+        {
+            "matches": ["<all_urls>"],
+            "js": ["js/features.js"]
+        }
+    ],
+    "icons": {
         "16": "icons/icon16.png",
         "48": "icons/icon48.png",
         "128": "icons/icon128.png"
-      }
     },
-    "content_scripts": [
-      {
-        "matches": ["http://*/*", "https://*/*"],
-        "js": ["js/features.js"]
-      }
-    ],
-    "icons": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    },
-    "manifest_version": 3
-  }
-  
+    "manifest_version": 3,
+    "content_security_policy": {
+        "extension_pages": "script-src 'self'; object-src 'self'"
+    }
+}

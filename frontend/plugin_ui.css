@@ -94,3 +94,21 @@ a:hover {
     color: #2980b9; /* Darker shade on hover */
     text-decoration: underline; /* Adds emphasis on hover */
 }
+.metrics-container {
+    margin-top: 20px;
+    padding: 15px;
+    border-radius: 8px;
+    background-color: #f5f5f5;
+}
+
+.metrics-title {
+    font-weight: bold;
+    margin-bottom: 10px;
+    color: #333;
+}
+
+.metric {
+    margin: 5px 0;
+    color: #666;
+    font-size: 14px;
+}

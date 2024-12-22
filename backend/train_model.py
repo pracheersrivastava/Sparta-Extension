@@ -1,76 +1,86 @@
+import os
 import pandas as pd
-from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import precision_score, recall_score, f1_score, accuracy_score
+import joblib
+import json
 
-def add_labels(dataset, label_column_name):
-  """
-  Adds a 'label' column to the dataset based on the values in the specified label column.
+# Load dataset
+print("Loading dataset...")
+file_path = "dataset.csv"
+data = pd.read_csv(file_path)
 
-  Args:
-      dataset (pandas.DataFrame): The dataset to add labels to.
-      label_column_name (str): The name of the column containing phishing labels.
+print("Data columns:", data.columns.tolist())
+print("Sample of 'label' column:", data['label'].head())
+print("Label data type:", data['label'].dtype)
 
-  Returns:
-      pandas.DataFrame: The dataset with the added 'label' column.
-  """
+# Convert labels if needed
+if data['label'].dtype != 'int64':
+    try:
+        # Try to convert to numeric directly
+        data['label'] = pd.to_numeric(data['label'])
+    except:
+        # If that fails, try string conversion
+        data['label'] = data['label'].astype(str).str.lower()
+        valid_labels = {'legitimate': 0, 'phishing': 1}
+        data['label'] = data['label'].map(valid_labels).fillna(0)
 
-  dataset['label'] = dataset[label_column_name].apply(lambda x: 1 if x == 'phishing' else 0)
-  return dataset
+print("Unique labels after conversion:", data['label'].unique())
 
-def train_model(dataset1_path, dataset2_path, label_column_name='status'):
-  """
-  Loads two datasets, adds labels, splits them into training and testing sets,
-  and trains a Random Forest model.
+# Features list
+feature_columns = [
+    'URLSimilarityIndex', 
+    'NoOfOtherSpecialCharsInURL', 
+    'SpacialCharRatioInURL', 
+    'IsHTTPS', 
+    'DomainTitleMatchScore', 
+    'URLTitleMatchScore', 
+    'IsResponsive', 
+    'HasDescription', 
+    'HasSocialNet', 
+    'HasSubmitButton', 
+    'HasCopyrightInfo', 
+    'NoOfImage', 
+    'NoOfJS', 
+    'NoOfSelfRef'
+]
 
-  Args:
-      dataset1_path (str): Path to the first dataset file.
-      dataset2_path (str): Path to the second dataset file.
-      label_column_name (str, optional): The name of the column containing phishing labels.
-          Defaults to 'status'.
-  """
+# Verify all features exist in dataset
+missing_columns = [col for col in feature_columns if col not in data.columns]
+if missing_columns:
+    raise ValueError(f"Missing columns in dataset: {missing_columns}")
 
-  try:
-    dataset1 = pd.read_csv(dataset1_path)
-    dataset2 = pd.read_csv(dataset2_path)
-  except FileNotFoundError:
-    print(f"Error: Dataset files not found at {dataset1_path} and {dataset2_path}")
-    return
+print("Preparing features...")
+features = data[feature_columns]
+labels = data['label']
 
-  # Check if the specified label column exists in both datasets
-  if label_column_name not in dataset1.columns or label_column_name not in dataset2.columns:
-    print(f"Error: Column '{label_column_name}' not found in one or both datasets.")
-    return
+# Split dataset
+print("Splitting dataset...")
+X_train, X_test, y_train, y_test = train_test_split(features, labels, test_size=0.2, random_state=42)
 
-  # Add labels to both datasets
-  dataset1 = add_labels(dataset1, label_column_name)
-  dataset2 = add_labels(dataset2, label_column_name)
+# Train model
+print("Training model...")
+model = RandomForestClassifier(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
 
-  # Combine datasets (optional, adjust based on your logic)
-  combined_dataset = pd.concat([dataset1, dataset2], ignore_index=True)
+# Make predictions on test set
+print("Calculating metrics...")
+y_pred = model.predict(X_test)
 
-  # Handle missing values (optional, adjust based on your strategy)
-  combined_dataset.fillna(method='ffill', inplace=True)  # Forward-fill missing values
+# Calculate metrics
+metrics = {
+    'accuracy': float(accuracy_score(y_test, y_pred)),
+    'precision': float(precision_score(y_test, y_pred)),
+    'recall': float(recall_score(y_test, y_pred)),
+    'f1_score': float(f1_score(y_test, y_pred))
+}
 
-  # Split into training and testing sets
-  X = combined_dataset.drop('label', axis=1)  # Features
-  y = combined_dataset['label']  # Target labels
-  X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Save model and metrics
+print("Saving model and metrics...")
+joblib.dump(model, "phishing_model.pkl")
+with open('model_metrics.json', 'w') as f:
+    json.dump(metrics, f)
 
-  # Train a Random Forest model (replace with your preferred model)
-  model = RandomForestClassifier()
-  model.fit(X_train, y_train)
-
-  # Save the model (optional)
-  # import joblib
-  # joblib.dump(model, 'phishing_model.pkl')
-
-  print("Model training complete!")
-
-if __name__ == "__main__":
-  dataset1_path = "/Users/dikshadamahe/Desktop/Sparta Extension/backend/dataset1.csv"
-  dataset2_path = "/Users/dikshadamahe/Desktop/Sparta Extension/backend/dataset2.csv"
-
-  # Specify the correct label column name for your datasets
-  label_column_name = 'status'  # Replace with the actual column name
-
-  train_model(dataset1_path, dataset2_path, label_column_name)
+print("\nModel trained and saved as phishing_model.pkl")
+print("Metrics:", metrics)
